@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Multipitch CH</title>
+<meta name="description" content="Map of multipitch climbs in Switzerland with route info and your own topos.">
+<meta name="theme-color" content="#c8221a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Multipitch">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+/* Layout: full-bleed swisstopo map; floating search bar on top; sheet slides up from the bottom (side panel on wide screens). */
+:root{
+  --red:#c8221a; --red-ink:#fff;
+  --bg:#f7f6f3; --panel:#ffffff; --ink:#1d1f1e; --muted:#5f6662; --line:#e3e1db; --chip:#efede8;
+  --shadow:0 6px 24px rgba(20,22,20,.18);
+  --radius:14px;
+  --font:-apple-system, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-display:-apple-system, "SF Pro Display", system-ui, "Segoe UI", Roboto, sans-serif;
+  --sat:env(safe-area-inset-top,0px); --sab:env(safe-area-inset-bottom,0px);
+  --sal:env(safe-area-inset-left,0px); --sar:env(safe-area-inset-right,0px);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#151716; --panel:#1f2221; --ink:#eceeed; --muted:#a3aaa6; --line:#323634; --chip:#2a2e2c; --shadow:0 6px 24px rgba(0,0,0,.5); color-scheme: dark; }
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.45 var(--font);-webkit-text-size-adjust:100%;overflow:hidden}
+button,input,select,textarea{font:inherit;color:inherit}
+[hidden]{display:none!important}
+#map{position:fixed;inset:0;background:#dfe3dc}
+
+/* Top bar */
+.top{position:fixed;z-index:1000;top:calc(var(--sat) + 10px);left:calc(var(--sal) + 10px);right:calc(var(--sar) + 10px);display:flex;gap:8px;align-items:flex-start;pointer-events:none}
+.search{flex:1;min-width:0;position:relative;pointer-events:auto;max-width:520px}
+.search input{width:100%;height:46px;border:0;border-radius:23px;padding:0 16px 0 42px;background:var(--panel);box-shadow:var(--shadow);outline:none;font-size:16px}
+.search input:focus-visible{box-shadow:var(--shadow),0 0 0 2px var(--red)}
+.search svg{position:absolute;left:14px;top:14px;width:18px;height:18px;color:var(--muted)}
+.results{position:absolute;top:52px;left:0;right:0;background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;max-height:50vh;overflow-y:auto}
+.results button{display:flex;width:100%;text-align:left;gap:10px;padding:11px 14px;border:0;background:none;border-bottom:1px solid var(--line);align-items:center}
+.results button:last-child{border-bottom:0}
+.results small{color:var(--muted);display:block}
+.fab{pointer-events:auto;width:46px;height:46px;border-radius:23px;border:0;background:var(--panel);box-shadow:var(--shadow);display:grid;place-items:center;cursor:pointer;flex:none}
+.fab svg{width:21px;height:21px}
+.fab.on{background:var(--red);color:var(--red-ink)}
+.fab:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+
+.side{position:fixed;z-index:999;right:calc(var(--sar) + 10px);bottom:calc(var(--sab) + 18px);display:flex;flex-direction:column;gap:10px}
+.legend{position:fixed;z-index:999;left:calc(var(--sal) + 10px);bottom:calc(var(--sab) + 18px);background:var(--panel);box-shadow:var(--shadow);border-radius:12px;padding:8px 11px;font-size:12px;display:flex;flex-direction:column;gap:4px;color:var(--muted)}
+.legend span{display:flex;align-items:center;gap:7px}
+.dot{width:14px;height:14px;border-radius:50%;flex:none;display:inline-block}
+.dot.full{background:var(--red);box-shadow:0 0 0 2px #fff}
+.dot.empty{background:#fff;border:3.5px solid var(--red)}
+.dot.mine{background:#1f6fd1;box-shadow:0 0 0 2px #fff}
+
+.banner{position:fixed;z-index:1001;left:50%;transform:translateX(-50%);top:calc(var(--sat) + 66px);background:var(--ink);color:var(--bg);padding:10px 14px;border-radius:12px;box-shadow:var(--shadow);display:flex;gap:12px;align-items:center;max-width:calc(100% - 20px)}
+.banner button{background:none;border:1px solid currentColor;border-radius:8px;padding:4px 10px;color:inherit}
+.toast{position:fixed;z-index:3000;left:50%;transform:translateX(-50%);bottom:calc(var(--sab) + 80px);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;box-shadow:var(--shadow);max-width:calc(100% - 32px);text-align:center}
+
+/* Sheet */
+.sheet{position:fixed;z-index:2000;left:0;right:0;bottom:0;max-height:78%;background:var(--panel);border-radius:18px 18px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.22);display:flex;flex-direction:column;transform:translateY(0);transition:transform .22s ease}
+.sheet.closed{transform:translateY(105%)}
+@media (min-width:820px){
+  .sheet{left:calc(var(--sal) + 12px);right:auto;top:calc(var(--sat) + 70px);bottom:calc(var(--sab) + 12px);width:400px;max-height:none;border-radius:var(--radius)}
+  .sheet.closed{transform:translateX(-110%)}
+}
+.sheet-head{display:flex;align-items:flex-start;gap:10px;padding:8px 16px 10px;padding-left:max(16px,var(--sal));padding-right:max(16px,var(--sar));border-bottom:1px solid var(--line)}
+.grab{width:38px;height:5px;border-radius:3px;background:var(--line);margin:8px auto 0}
+.sheet-head h2{font:650 20px/1.2 var(--font-display);margin:2px 0 2px;text-wrap:balance;letter-spacing:-.01em}
+.sheet-head p{margin:0;color:var(--muted);font-size:13px}
+.close{margin-left:auto;flex:none;width:34px;height:34px;border-radius:17px;border:0;background:var(--chip);display:grid;place-items:center;cursor:pointer}
+.sheet-body{overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 16px calc(var(--sab) + 22px);padding-left:max(16px,var(--sal));padding-right:max(16px,var(--sar));display:flex;flex-direction:column;gap:18px}
+.sec h3{font:600 11.5px/1 var(--font);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 9px}
+.card{border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.card + .card{margin-top:10px}
+.card h4{margin:0;font:600 16px/1.3 var(--font)}
+.card h4 small{font-weight:500;color:var(--muted);font-size:12.5px;margin-left:6px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{background:var(--chip);border-radius:7px;padding:3px 8px;font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.chip b{font-weight:650}
+.chip.grade{background:var(--red);color:var(--red-ink)}
+.note{color:var(--muted);font-size:14px;margin:0}
+.text{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+dl.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;font-size:14px}
+dl.kv dt{color:var(--muted)}
+dl.kv dd{margin:0;overflow-wrap:anywhere;white-space:pre-wrap}
+.links{display:flex;flex-wrap:wrap;gap:8px}
+.links a{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:10px;border:1px solid var(--line);color:var(--ink);text-decoration:none;font-size:14px}
+.links a:active{background:var(--chip)}
+.doclist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.doclist li + li{border-top:1px solid var(--line)}
+.doclist a{display:flex;gap:10px;align-items:flex-start;padding:9px 0;color:var(--ink);text-decoration:none;min-width:0}
+.doclist a span:last-child{min-width:0;overflow-wrap:anywhere}
+.doclist small{display:block;color:var(--muted);font-size:12px}
+.doclist .tag{flex:none;font-size:10.5px;font-weight:700;letter-spacing:.04em;border:1.5px solid var(--red);color:var(--red);border-radius:5px;padding:1px 5px;margin-top:2px}
+.photos{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}
+.photos img{height:110px;width:auto;border-radius:9px;object-fit:cover;background:var(--chip);cursor:zoom-in;flex:none}
+.btn{border:0;border-radius:12px;padding:12px 16px;font-weight:600;cursor:pointer;background:var(--chip)}
+.btn.primary{background:var(--red);color:var(--red-ink)}
+.btn.small{padding:7px 11px;font-size:13.5px;border-radius:9px}
+.btn.danger{color:var(--red)}
+.btn:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.attr{font-size:11.5px;color:var(--muted)}
+
+/* Form */
+form.topo{display:flex;flex-direction:column;gap:12px}
+.field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.field label{font-size:13px;color:var(--muted)}
+.field input,.field textarea,.field select{border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:10px 11px;font-size:16px;width:100%}
+.field textarea{min-height:76px;resize:vertical}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.thumbs{display:flex;gap:8px;flex-wrap:wrap}
+.thumb{position:relative}
+.thumb img{width:76px;height:76px;object-fit:cover;border-radius:9px}
+.thumb button{position:absolute;top:-6px;right:-6px;width:24px;height:24px;border-radius:12px;border:0;background:var(--ink);color:var(--bg);font-size:14px;line-height:1}
+.pick{display:flex;align-items:center;justify-content:center;width:76px;height:76px;border:2px dashed var(--line);border-radius:9px;color:var(--muted);cursor:pointer;font-size:26px}
+
+/* Photo viewer */
+.viewer{position:fixed;inset:0;z-index:4000;background:#000;touch-action:none;overflow:hidden}
+.viewer img{position:absolute;left:50%;top:50%;max-width:100%;max-height:100%;transform-origin:center;user-select:none;-webkit-user-drag:none}
+.viewer .close{position:absolute;top:calc(var(--sat) + 12px);right:calc(var(--sar) + 12px);background:rgba(255,255,255,.18);color:#fff;z-index:2}
+.viewer .count{position:absolute;bottom:calc(var(--sab) + 16px);left:0;right:0;text-align:center;color:#ddd;font-size:13px}
+
+.leaflet-container{font:inherit}
+.leaflet-control-attribution{font-size:10px;margin-bottom:var(--sab)!important}
+.me-dot{width:16px;height:16px;border-radius:50%;background:#1f6fd1;border:3px solid #fff;box-shadow:0 0 0 6px rgba(31,111,209,.25)}
+@media (prefers-reduced-motion: reduce){ .sheet{transition:none} }
+</style>
+</head>
+<body>
+<div id="map" aria-label="Map of Switzerland"></div>
+
+<div class="top">
+  <div class="search">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="q" type="search" placeholder="Search walls, peaks, routes" autocomplete="off" aria-label="Search">
+    <div class="results" id="results" hidden></div>
+  </div>
+  <button class="fab" id="btnAdd" title="Add a new spot" aria-label="Add a new spot">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+  </button>
+  <button class="fab" id="btnMenu" title="Data, backup and map settings" aria-label="Menu">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  </button>
+</div>
+
+<div class="side">
+  <button class="fab" id="btnLayer" title="Switch map / aerial" aria-label="Switch map or aerial photo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg>
+  </button>
+  <button class="fab" id="btnLocate" title="Show my location" aria-label="Show my location">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+  </button>
+</div>
+
+<div class="legend" id="legend">
+  <span><i class="dot full"></i>Route info / topo</span>
+  <span><i class="dot empty"></i>No data yet</span>
+  <span><i class="dot mine"></i>Your spot</span>
+</div>
+
+<div class="banner" id="addBanner" hidden><span>Tap the map where the climb starts</span><button id="addCancel">Cancel</button></div>
+<div class="toast" id="toast" hidden></div>
+
+<section class="sheet closed" id="sheet" aria-live="polite">
+  <div class="grab" aria-hidden="true"></div>
+  <div class="sheet-head">
+    <div style="min-width:0"><h2 id="sTitle"></h2><p id="sSub"></p></div>
+    <button class="close" id="sClose" aria-label="Close">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </div>
+  <div class="sheet-body" id="sBody"></div>
+</section>
+
+<div class="viewer" id="viewer" hidden>
+  <button class="close" id="vClose" aria-label="Close photo">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+  </button>
+  <img id="vImg" alt="">
+  <div class="count" id="vCount"></div>
+</div>
+
+<input type="file" id="importFile" accept="application/json,.json" hidden>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
